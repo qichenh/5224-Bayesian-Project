@@ -1,0 +1,284 @@
+---
+title: "Accompanying codes for the project"
+author: "Qichen He, Shin Ah Oh, Yue Shen, Mo Zhou"
+date: "5/17/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Preparing the data
+
+```{r, warning = FALSE, message = FALSE}
+
+## Load necessary packages and functions
+
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(rstan)
+library(zoo)
+library(loo)
+library(bayesplot)
+source("Helping_functions.R")
+
+```
+
+```{r}
+
+## Load data from local file location
+
+load("C:/Users/fairy/Documents/Bayesian Statistics/Project - Final Output/filnal code and result/filnal code and result/30263-0001-Data.rda")
+data_full <- da30263.0001 
+
+
+
+## Choose school code 105; same code applies to school code 104
+
+data = get_school_data(data_full, 105) 
+
+
+
+## Get the student id with 0 or 1 missing data
+
+student_all_grade = data %>% group_by(case_identifier) %>% 
+    summarise(count = sum(is.na(score))) %>% filter(count < 1)
+
+```
+
+We interpolate `NA`s using linear approximation.
+
+
+
+## Generating the data exploration figures in the paper 
+
+```{r}
+
+## Relationship between math achievement and rates of change
+
+data.figure1 = data %>% 
+    filter(case_identifier %in% student_all_grade$case_identifier) %>%
+    mutate(grade = as.factor(grade)) %>%
+    mutate(initial = as.factor(ifelse(score < 55, 1, 
+                            ifelse(score < 60, 2, 
+                                   ifelse(score < 65, 3, 4))))) %>%
+    group_by(initial, grade) %>%
+    summarise(score = mean(score))
+
+interaction.plot(data.figure1$grade, 
+                 data.figure1$initial,
+                 data.figure1$score, 
+                 legend = F, xlab = "Grade",ylab = "Math Ach.")
+
+rm(data.figure1)
+
+```
+
+```{r}
+
+## Initial math achievement and rates of change with gender 
+
+data.figure2 = data %>% 
+    filter(case_identifier %in% student_all_grade$case_identifier) %>%
+    mutate(grade = as.factor(grade),
+           case_identifier = as.factor(case_identifier)) %>%
+    mutate(initial = as.factor(ifelse(score < 60, 1, 2))) %>%
+    group_by(initial, grade, Gender_coded) %>%
+    summarise(score = mean(score)) 
+
+ggplot(data.figure2[data.figure2$Gender_coded == 0,]) + 
+    geom_line(aes(grade, score,group = initial), linetype = "dotdash") +
+    geom_line(data = data.figure2[data.figure2$Gender_coded == 1,], 
+              mapping = aes(grade, score,group = initial)) +
+    theme_light()
+ rm(data.figure2)
+ 
+```
+
+
+
+## We further tidy the data to be used for modeling
+
+```{r}
+
+data_model = data %>% 
+  filter(case_identifier %in% student_all_grade$case_identifier) %>%
+  group_by(case_identifier) %>% mutate(score = na.locf(score))
+
+```
+
+
+
+## Model building - Model 1
+
+```{r}
+
+## Build model
+
+dat1 = get_dat1_list(data_model)
+
+  # Load Stan file from local file location
+
+fileName <- "C:/Users/fairy/Documents/Bayesian Statistics/Project - Final Output/model4.stan"
+pars_1 = c("beta_0","beta_1","beta_01","beta_11","sigma_u0","sigma_u1","sigma")
+
+  # Run model
+
+resStan1 = train_two_level(fileName = fileName, data = dat1, pars = pars_1, iter = 10000, warmup = 3000)
+
+  # Traceplot to check convergence
+
+traceplot(resStan1, pars = pars_1,ncol = 2,inc_warmup = FALSE)
+
+  # Print results
+
+print(resStan1, pars = pars_1)
+
+
+
+## Model checking
+
+y_rep <- as.matrix(resStan1, pars = "y_rep")
+dim(y_rep)
+
+ppc_dens_overlay(dat1$Y_ti, y_rep[200:500, ]) + 
+  theme_light() + 
+  theme(legend.position="top")
+
+p_value = mean(apply(y_rep,1,Test)>Test(dat1$Y_ti))
+ppc_stat(dat1$Y_ti, yrep = y_rep, stat = Test)+
+  theme_light() + 
+  theme(legend.position="top")
+p_value
+
+```
+
+Here, we compared the density of y with densities of y from 200 posterior draws.
+
+
+
+## Model building - Model 2
+
+```{r}
+
+dat2 = get_dat2_list(data_model)
+
+  # Load Stan file from local file location
+
+fileName2 <- "C:/Users/fairy/Documents/Bayesian Statistics/Project - Final Output/model5.stan"
+pars_2 = c("beta_0","beta_1","beta_01","beta_11","sigma_u0","sigma_u1","sigma","b")
+
+  # Run model
+
+resStan2 = train_two_level(fileName = fileName2, data = dat2, pars = pars_2,iter = 10000, warmup = 3000)
+
+  # Traceplot to check convergence
+
+traceplot(resStan2, pars = pars_2,ncol = 2,inc_warmup = FALSE)
+
+  # Print results
+
+print(resStan2, pars = pars_2)
+
+
+
+## Model checking
+
+y_rep <- as.matrix(resStan2, pars = "y_rep")
+dim(y_rep)
+ppc_dens_overlay(dat2$Y_ti, y_rep[1:200, ])
+
+p_value = mean(apply(y_rep,1,Test)>Test(dat2$Y_ti))
+ppc_stat(dat2$Y_ti, yrep = y_rep, stat = Test)
+
+```
+
+
+
+## Model building - Model 3
+
+```{r}
+
+dat3 = get_dat2_list(data_model)
+
+  # Load Stan file from local file location
+
+fileName <- "C:/Users/fairy/Documents/Bayesian Statistics/Project - Final Output/model6.stan"
+pars_3 = c("beta_0","beta_1","beta_01","beta_11","sigma_u0","sigma_u1","sigma","b1","b2")
+
+  # Run model
+
+resStan3 = train_two_level(fileName = fileName, data = dat3, pars = pars_3,iter = 10000, warmup = 3000)
+
+  # Traceplot to check convergence
+
+traceplot(resStan3, pars = pars_3,ncol = 2,inc_warmup = FALSE)
+
+  # Print results
+
+print(resStan3, pars = pars_3)
+
+
+
+## Model checking
+
+y_rep <- as.matrix(resStan3, pars = "y_rep")
+dim(y_rep)
+ppc_dens_overlay(dat3$Y_ti, y_rep[1:200, ])
+
+p_value = mean(apply(y_rep,1,Test)>Test(dat3$Y_ti))
+ppc_stat(dat3$Y_ti, yrep = y_rep, stat = Test)
+p_value
+
+```
+
+
+
+## Additional steps for school 105, Model 3 (this section does not apply to school 104)
+
+```{r}
+
+dat3 = get_dat2_list(data_model)
+
+  # Load Stan file from local file location
+
+fileName <- "C:/Users/fairy/Documents/Bayesian Statistics/Project - Final Output/model7.stan"
+pars_3 = c("beta_0","beta_1","beta_01","beta_11","sigma_u0","sigma_u1","sigma","b1","b2")
+
+  # Run model
+
+resStan4 = train_two_level(fileName = fileName, data = dat3, pars = pars_3,iter = 10000, warmup = 3000)
+
+  # Traceplot to check convergence
+
+traceplot(resStan4, pars = pars_3,ncol = 2,inc_warmup = FALSE)
+
+  # Print results
+
+print(resStan4, pars = pars_3)
+
+```
+
+
+
+## Comparing Models 1, 2, and 3
+
+```{r, warning = FALSE}
+
+fitlist <- list(
+  resStan1 = resStan1,
+  resStan2 = resStan2,
+  resStan3 = resStan3
+)
+
+fitlist  %>% 
+  lapply(extract_log_lik) %>%
+  lapply(loo) ->
+  loolist
+loolist
+loolist[1:3] %>% loo_compare(x = .)
+
+```
+
+
